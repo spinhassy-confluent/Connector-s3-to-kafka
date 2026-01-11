@@ -1,0 +1,10 @@
+com/kafka/connect/s3/S3ClientWrapper.class
+com/kafka/connect/s3/S3ClientWrapper$RetryableOperation.class
+com/kafka/connect/s3/OffsetManager.class
+com/kafka/connect/s3/FileFormatParser$2.class
+com/kafka/connect/s3/S3SourceConnectorConfig.class
+com/kafka/connect/s3/S3SourceConnector.class
+com/kafka/connect/s3/FileFormatParser$1.class
+com/kafka/connect/s3/S3SourceTask.class
+com/kafka/connect/s3/FileFormatParser.class
+com/kafka/connect/s3/FileFormatParser$3.class
