@@ -1,6 +1,0 @@
-/home/runner/work/Connector-s3-to-kafka/Connector-s3-to-kafka/src/main/java/com/kafka/connect/s3/S3SourceConnector.java
-/home/runner/work/Connector-s3-to-kafka/Connector-s3-to-kafka/src/main/java/com/kafka/connect/s3/S3SourceTask.java
-/home/runner/work/Connector-s3-to-kafka/Connector-s3-to-kafka/src/main/java/com/kafka/connect/s3/OffsetManager.java
-/home/runner/work/Connector-s3-to-kafka/Connector-s3-to-kafka/src/main/java/com/kafka/connect/s3/S3SourceConnectorConfig.java
-/home/runner/work/Connector-s3-to-kafka/Connector-s3-to-kafka/src/main/java/com/kafka/connect/s3/S3ClientWrapper.java
-/home/runner/work/Connector-s3-to-kafka/Connector-s3-to-kafka/src/main/java/com/kafka/connect/s3/FileFormatParser.java

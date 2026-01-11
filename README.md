@@ -53,6 +53,7 @@ This will create a JAR file in the `target` directory with all dependencies incl
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `s3.region` | string | `us-east-1` | AWS region where the S3 bucket is located |
+| `s3.endpoint.url` | string | (empty) | Custom S3 endpoint URL for S3-compatible storage (e.g., MinIO, Ceph). Leave empty for AWS S3. |
 | `aws.access.key.id` | string | (empty) | AWS access key ID. If not provided, uses default credential chain |
 | `aws.secret.access.key` | password | (empty) | AWS secret access key. If not provided, uses default credential chain |
 | `aws.session.token` | password | (empty) | AWS session token for temporary credentials |
@@ -294,10 +295,63 @@ log4j.logger.com.kafka.connect.s3=DEBUG
 
 ## Security
 
-- Use IAM roles when possible instead of access keys
-- Store sensitive credentials in a secure credential store
-- Use VPC endpoints for S3 access when in AWS
-- Enable S3 bucket encryption
+### Best Practices
+
+- **Use IAM roles when possible** instead of access keys - this is the most secure method
+- **Store sensitive credentials** in a secure credential store (e.g., AWS Secrets Manager, HashiCorp Vault)
+- **Use VPC endpoints** for S3 access when running in AWS to keep traffic within AWS network
+- **Enable S3 bucket encryption** (SSE-S3, SSE-KMS, or SSE-C) to protect data at rest
+- **Enable bucket versioning** to protect against accidental deletion
+- **Use least privilege principle** - grant only the minimum required S3 permissions:
+  - `s3:ListBucket` on the bucket
+  - `s3:GetObject` on objects within the bucket
+  - Optionally `s3:GetObjectVersion` if using versioned buckets
+- **Never commit credentials** to version control
+- **Rotate credentials regularly** if using access keys
+- **Monitor access logs** to detect unusual access patterns
+- **Use HTTPS/TLS** for all S3 connections (enabled by default)
+
+### S3 Bucket Policy Example
+
+Minimal IAM policy for the connector:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::your-bucket-name"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::your-bucket-name/*"
+    }
+  ]
+}
+```
+
+### Configuration Validation
+
+The connector validates:
+- S3 bucket name format (prevents injection attacks)
+- Timestamp formats (ISO 8601)
+- Positive values for timeouts and sizes
+- Required fields based on error handling mode
+
+### Error Message Sanitization
+
+Error messages are sanitized to prevent exposure of sensitive information such as:
+- AWS access keys
+- Secret access keys
+- Passwords
+- Session tokens
 
 ## License
 

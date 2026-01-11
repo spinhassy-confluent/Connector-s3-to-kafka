@@ -108,7 +108,7 @@ public class FileFormatParser {
                     continue;
                 }
 
-                String[] values = line.split(delimiter, -1);
+                String[] values = parseCsvLine(line, delimiter);
 
                 if (hasHeader && headers == null) {
                     headers = values;
@@ -118,12 +118,12 @@ public class FileFormatParser {
                 Map<String, Object> record = new HashMap<>();
                 if (headers != null) {
                     for (int i = 0; i < headers.length && i < values.length; i++) {
-                        record.put(headers[i].trim(), values[i].trim());
+                        record.put(headers[i].trim(), values[i]);
                     }
                 } else {
                     // No header, use column indices
                     for (int i = 0; i < values.length; i++) {
-                        record.put("column_" + i, values[i].trim());
+                        record.put("column_" + i, values[i]);
                     }
                 }
                 records.add(record);
@@ -134,6 +134,39 @@ public class FileFormatParser {
         }
 
         return records;
+    }
+    
+    /**
+     * Parse a CSV line handling quoted fields that may contain delimiters
+     */
+    private String[] parseCsvLine(String line, String delimiter) {
+        List<String> result = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            
+            if (c == '"') {
+                // Handle escaped quotes
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++; // Skip next quote
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (!inQuotes && String.valueOf(c).equals(delimiter)) {
+                result.add(current.toString().trim());
+                current = new StringBuilder();
+            } else {
+                current.append(c);
+            }
+        }
+        
+        // Add the last field
+        result.add(current.toString().trim());
+        
+        return result.toArray(new String[0]);
     }
 
     private List<Map<String, Object>> parseText(byte[] content, String objectKey) {

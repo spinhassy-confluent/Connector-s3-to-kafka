@@ -23,6 +23,10 @@ public class S3SourceConnectorConfig extends AbstractConfig {
     public static final String S3_REGION_CONFIG = "s3.region";
     public static final String S3_REGION_DEFAULT = "us-east-1";
     public static final String S3_REGION_DOC = "AWS region where the S3 bucket is located";
+    
+    public static final String S3_ENDPOINT_URL_CONFIG = "s3.endpoint.url";
+    public static final String S3_ENDPOINT_URL_DEFAULT = "";
+    public static final String S3_ENDPOINT_URL_DOC = "Custom S3 endpoint URL for S3-compatible storage (e.g., MinIO, Ceph). Leave empty for AWS S3.";
 
     public static final String S3_PREFIX_CONFIG = "s3.prefix";
     public static final String S3_PREFIX_DEFAULT = "";
@@ -167,6 +171,8 @@ public class S3SourceConnectorConfig extends AbstractConfig {
                 // AWS Configuration
                 .define(S3_REGION_CONFIG, ConfigDef.Type.STRING, S3_REGION_DEFAULT,
                         ConfigDef.Importance.MEDIUM, S3_REGION_DOC)
+                .define(S3_ENDPOINT_URL_CONFIG, ConfigDef.Type.STRING, S3_ENDPOINT_URL_DEFAULT,
+                        ConfigDef.Importance.LOW, S3_ENDPOINT_URL_DOC)
                 .define(AWS_ACCESS_KEY_ID_CONFIG, ConfigDef.Type.STRING, AWS_ACCESS_KEY_ID_DEFAULT,
                         ConfigDef.Importance.MEDIUM, AWS_ACCESS_KEY_ID_DOC)
                 .define(AWS_SECRET_ACCESS_KEY_CONFIG, ConfigDef.Type.PASSWORD, AWS_SECRET_ACCESS_KEY_DEFAULT,
@@ -265,6 +271,13 @@ public class S3SourceConnectorConfig extends AbstractConfig {
         if (bucketName == null || bucketName.trim().isEmpty()) {
             throw new ConfigException(S3_BUCKET_NAME_CONFIG + " is required and cannot be empty");
         }
+        
+        // Validate bucket name format according to S3 bucket naming rules
+        if (!isValidBucketName(bucketName)) {
+            throw new ConfigException(S3_BUCKET_NAME_CONFIG + " contains invalid characters. " +
+                    "Bucket names must be between 3 and 63 characters long, " +
+                    "can contain lowercase letters, numbers, hyphens, and periods.");
+        }
 
         String topic = getString(TOPIC_CONFIG);
         if (topic == null || topic.trim().isEmpty()) {
@@ -276,6 +289,10 @@ public class S3SourceConnectorConfig extends AbstractConfig {
         if (minSize > maxSize) {
             throw new ConfigException(MIN_OBJECT_SIZE_CONFIG + " cannot be greater than " + MAX_OBJECT_SIZE_CONFIG);
         }
+        
+        if (minSize < 0) {
+            throw new ConfigException(MIN_OBJECT_SIZE_CONFIG + " cannot be negative");
+        }
 
         String errorHandling = getString(ERROR_HANDLING_CONFIG);
         if ("skip".equals(errorHandling)) {
@@ -284,6 +301,85 @@ public class S3SourceConnectorConfig extends AbstractConfig {
                 throw new ConfigException(DEAD_LETTER_TOPIC_CONFIG + " is required when " + ERROR_HANDLING_CONFIG + " is 'skip'");
             }
         }
+        
+        // Validate timestamp formats if provided
+        if (getBoolean(FILTER_BY_LAST_MODIFIED_CONFIG)) {
+            String lastModifiedAfter = getString(LAST_MODIFIED_AFTER_CONFIG);
+            if (lastModifiedAfter != null && !lastModifiedAfter.isEmpty()) {
+                try {
+                    java.time.Instant.parse(lastModifiedAfter);
+                } catch (Exception e) {
+                    throw new ConfigException(LAST_MODIFIED_AFTER_CONFIG + " must be in ISO 8601 format (e.g., 2024-01-01T00:00:00Z)");
+                }
+            }
+            
+            String lastModifiedBefore = getString(LAST_MODIFIED_BEFORE_CONFIG);
+            if (lastModifiedBefore != null && !lastModifiedBefore.isEmpty()) {
+                try {
+                    java.time.Instant.parse(lastModifiedBefore);
+                } catch (Exception e) {
+                    throw new ConfigException(LAST_MODIFIED_BEFORE_CONFIG + " must be in ISO 8601 format (e.g., 2024-01-01T00:00:00Z)");
+                }
+            }
+        }
+        
+        // Validate positive values
+        if (getInt(MAX_RETRIES_CONFIG) < 0) {
+            throw new ConfigException(MAX_RETRIES_CONFIG + " cannot be negative");
+        }
+        
+        if (getLong(RETRY_BACKOFF_MS_CONFIG) < 0) {
+            throw new ConfigException(RETRY_BACKOFF_MS_CONFIG + " cannot be negative");
+        }
+        
+        if (getInt(CONNECT_TIMEOUT_MS_CONFIG) <= 0) {
+            throw new ConfigException(CONNECT_TIMEOUT_MS_CONFIG + " must be positive");
+        }
+        
+        if (getInt(SOCKET_TIMEOUT_MS_CONFIG) <= 0) {
+            throw new ConfigException(SOCKET_TIMEOUT_MS_CONFIG + " must be positive");
+        }
+        
+        if (getInt(MAX_OBJECTS_PER_POLL_CONFIG) <= 0) {
+            throw new ConfigException(MAX_OBJECTS_PER_POLL_CONFIG + " must be positive");
+        }
+        
+        if (getInt(BATCH_SIZE_CONFIG) <= 0) {
+            throw new ConfigException(BATCH_SIZE_CONFIG + " must be positive");
+        }
+        
+        if (getLong(POLL_INTERVAL_MS_CONFIG) < 0) {
+            throw new ConfigException(POLL_INTERVAL_MS_CONFIG + " cannot be negative");
+        }
+    }
+    
+    /**
+     * Validates S3 bucket name according to AWS naming rules
+     */
+    private boolean isValidBucketName(String bucketName) {
+        if (bucketName.length() < 3 || bucketName.length() > 63) {
+            return false;
+        }
+        
+        // Bucket names must start and end with lowercase letter or number
+        if (!Character.isLetterOrDigit(bucketName.charAt(0)) || 
+            !Character.isLetterOrDigit(bucketName.charAt(bucketName.length() - 1))) {
+            return false;
+        }
+        
+        // Check for valid characters: lowercase letters, numbers, hyphens, periods
+        for (char c : bucketName.toCharArray()) {
+            if (!Character.isLowerCase(c) && !Character.isDigit(c) && c != '-' && c != '.') {
+                return false;
+            }
+        }
+        
+        // Bucket names must not be formatted as IP addresses
+        if (bucketName.matches("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$")) {
+            return false;
+        }
+        
+        return true;
     }
 
     // Getters for all configuration properties
@@ -421,5 +517,9 @@ public class S3SourceConnectorConfig extends AbstractConfig {
 
     public String getKeyField() {
         return getString(KEY_FIELD_CONFIG);
+    }
+    
+    public String getEndpointUrl() {
+        return getString(S3_ENDPOINT_URL_CONFIG);
     }
 }
