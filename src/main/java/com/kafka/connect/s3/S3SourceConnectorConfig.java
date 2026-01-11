@@ -27,6 +27,10 @@ public class S3SourceConnectorConfig extends AbstractConfig {
     public static final String S3_ENDPOINT_URL_CONFIG = "s3.endpoint.url";
     public static final String S3_ENDPOINT_URL_DEFAULT = "";
     public static final String S3_ENDPOINT_URL_DOC = "Custom S3 endpoint URL for S3-compatible storage (e.g., MinIO, Ceph). Leave empty for AWS S3.";
+    
+    public static final String S3_PATH_STYLE_ACCESS_CONFIG = "s3.path.style.access";
+    public static final boolean S3_PATH_STYLE_ACCESS_DEFAULT = false;
+    public static final String S3_PATH_STYLE_ACCESS_DOC = "Use path-style access for S3 (required for some S3-compatible storage). Default is virtual-hosted-style.";
 
     public static final String S3_PREFIX_CONFIG = "s3.prefix";
     public static final String S3_PREFIX_DEFAULT = "";
@@ -173,6 +177,8 @@ public class S3SourceConnectorConfig extends AbstractConfig {
                         ConfigDef.Importance.MEDIUM, S3_REGION_DOC)
                 .define(S3_ENDPOINT_URL_CONFIG, ConfigDef.Type.STRING, S3_ENDPOINT_URL_DEFAULT,
                         ConfigDef.Importance.LOW, S3_ENDPOINT_URL_DOC)
+                .define(S3_PATH_STYLE_ACCESS_CONFIG, ConfigDef.Type.BOOLEAN, S3_PATH_STYLE_ACCESS_DEFAULT,
+                        ConfigDef.Importance.LOW, S3_PATH_STYLE_ACCESS_DOC)
                 .define(AWS_ACCESS_KEY_ID_CONFIG, ConfigDef.Type.STRING, AWS_ACCESS_KEY_ID_DEFAULT,
                         ConfigDef.Importance.MEDIUM, AWS_ACCESS_KEY_ID_DOC)
                 .define(AWS_SECRET_ACCESS_KEY_CONFIG, ConfigDef.Type.PASSWORD, AWS_SECRET_ACCESS_KEY_DEFAULT,
@@ -521,5 +527,9 @@ public class S3SourceConnectorConfig extends AbstractConfig {
     
     public String getEndpointUrl() {
         return getString(S3_ENDPOINT_URL_CONFIG);
+    }
+    
+    public boolean getPathStyleAccess() {
+        return getBoolean(S3_PATH_STYLE_ACCESS_CONFIG);
     }
 }

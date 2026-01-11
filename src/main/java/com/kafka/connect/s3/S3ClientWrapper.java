@@ -64,6 +64,12 @@ public class S3ClientWrapper implements AutoCloseable {
             } catch (java.net.URISyntaxException e) {
                 throw new IllegalArgumentException("Invalid S3 endpoint URL: " + endpointUrl, e);
             }
+            
+            // Enable path-style access if configured (required for some S3-compatible storage)
+            if (config.getPathStyleAccess()) {
+                s3Builder.forcePathStyle(true);
+                log.debug("Path-style access enabled");
+            }
         }
         
         this.s3Client = s3Builder.build();
