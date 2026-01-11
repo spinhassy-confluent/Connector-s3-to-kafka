@@ -138,7 +138,17 @@ public class S3ClientWrapper implements AutoCloseable {
             throw new IllegalArgumentException("Object key cannot be null or empty");
         }
         
-        if (key.contains("..") || key.startsWith("/")) {
+        // Check for various path traversal patterns
+        if (key.contains("..") || 
+            key.startsWith("/") || 
+            key.contains("\\") ||
+            key.contains("%2e%2e") || // URL-encoded ..
+            key.contains("%2E%2E") ||
+            key.contains("%2f") ||     // URL-encoded /
+            key.contains("%2F") ||
+            key.contains("%5c") ||     // URL-encoded \
+            key.contains("%5C") ||
+            key.contains("\0")) {      // Null byte
             throw new IllegalArgumentException("Invalid object key: potential path traversal detected");
         }
         

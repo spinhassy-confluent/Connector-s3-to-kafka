@@ -367,9 +367,16 @@ public class S3SourceConnectorConfig extends AbstractConfig {
             return false;
         }
         
+        // Bucket names must be all lowercase
+        if (!bucketName.equals(bucketName.toLowerCase())) {
+            return false;
+        }
+        
         // Bucket names must start and end with lowercase letter or number
-        if (!Character.isLetterOrDigit(bucketName.charAt(0)) || 
-            !Character.isLetterOrDigit(bucketName.charAt(bucketName.length() - 1))) {
+        char firstChar = bucketName.charAt(0);
+        char lastChar = bucketName.charAt(bucketName.length() - 1);
+        if (!(Character.isLowerCase(firstChar) || Character.isDigit(firstChar)) || 
+            !(Character.isLowerCase(lastChar) || Character.isDigit(lastChar))) {
             return false;
         }
         
@@ -380,9 +387,23 @@ public class S3SourceConnectorConfig extends AbstractConfig {
             }
         }
         
-        // Bucket names must not be formatted as IP addresses
+        // Bucket names must not be formatted as IP addresses (0-255.0-255.0-255.0-255)
         if (bucketName.matches("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$")) {
-            return false;
+            // Validate that it's actually an IP address pattern
+            String[] parts = bucketName.split("\\.");
+            if (parts.length == 4) {
+                try {
+                    for (String part : parts) {
+                        int value = Integer.parseInt(part);
+                        if (value >= 0 && value <= 255) {
+                            // This looks like a valid IP address, reject it
+                            return false;
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                    // Not a valid number, so it's fine
+                }
+            }
         }
         
         return true;

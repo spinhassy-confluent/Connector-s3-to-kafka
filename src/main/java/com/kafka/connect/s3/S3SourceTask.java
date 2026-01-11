@@ -60,7 +60,7 @@ public class S3SourceTask extends SourceTask {
     }
 
     @Override
-    public List<SourceRecord> poll() throws InterruptedException {
+    public List<SourceRecord> poll() {
         if (!running.get()) {
             return null;
         }
@@ -77,7 +77,13 @@ public class S3SourceTask extends SourceTask {
         long timeSinceLastPoll = currentTime - lastPollTime;
         if (lastPollTime > 0 && timeSinceLastPoll < config.getPollIntervalMs()) {
             long sleepTime = config.getPollIntervalMs() - timeSinceLastPoll;
-            Thread.sleep(sleepTime);
+            try {
+                Thread.sleep(sleepTime);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.debug("Sleep interrupted during poll interval");
+                return null;
+            }
         }
 
         try {
@@ -143,7 +149,14 @@ public class S3SourceTask extends SourceTask {
             return Collections.emptyList();
         }
         
-        long lastModified = s3Object.lastModified() != null ? s3Object.lastModified().toEpochMilli() : System.currentTimeMillis();
+        // Get last modified timestamp
+        long lastModified;
+        if (s3Object.lastModified() != null) {
+            lastModified = s3Object.lastModified().toEpochMilli();
+        } else {
+            log.warn("S3 object {} has null lastModified timestamp, using current time. This may affect offset tracking.", objectKey);
+            lastModified = System.currentTimeMillis();
+        }
 
         log.debug("Processing S3 object: {}", objectKey);
 
@@ -292,9 +305,10 @@ public class S3SourceTask extends SourceTask {
         }
         
         // Remove potential access keys, secrets, and credentials from error messages
-        String sanitized = message.replaceAll("(?i)(aws[_-]?access[_-]?key[_-]?id|access[_-]?key)[:\\s=]+[A-Z0-9]{20}", "$1=***");
+        String sanitized = message.replaceAll("(?i)(aws[_-]?access[_-]?key[_-]?id|access[_-]?key)[:\\s=]+[A-Za-z0-9]{16,}", "$1=***");
         sanitized = sanitized.replaceAll("(?i)(aws[_-]?secret[_-]?access[_-]?key|secret[_-]?key)[:\\s=]+[A-Za-z0-9/+=]{40}", "$1=***");
         sanitized = sanitized.replaceAll("(?i)(password|passwd|pwd)[:\\s=]+\\S+", "$1=***");
+        sanitized = sanitized.replaceAll("(?i)(session[_-]?token|token)[:\\s=]+[A-Za-z0-9/+=]{16,}", "$1=***");
         
         return sanitized;
     }

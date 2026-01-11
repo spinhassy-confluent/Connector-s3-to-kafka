@@ -144,6 +144,9 @@ public class FileFormatParser {
         StringBuilder current = new StringBuilder();
         boolean inQuotes = false;
         
+        // Optimize for single-character delimiters
+        char delimiterChar = delimiter.length() == 1 ? delimiter.charAt(0) : '\0';
+        
         for (int i = 0; i < line.length(); i++) {
             char c = line.charAt(i);
             
@@ -155,9 +158,13 @@ public class FileFormatParser {
                 } else {
                     inQuotes = !inQuotes;
                 }
-            } else if (!inQuotes && String.valueOf(c).equals(delimiter)) {
+            } else if (!inQuotes && (delimiterChar != '\0' ? c == delimiterChar : line.startsWith(delimiter, i))) {
                 result.add(current.toString().trim());
                 current = new StringBuilder();
+                // Skip remaining delimiter characters for multi-char delimiters
+                if (delimiterChar == '\0') {
+                    i += delimiter.length() - 1;
+                }
             } else {
                 current.append(c);
             }
