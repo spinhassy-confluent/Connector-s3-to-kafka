@@ -1,0 +1,26 @@
+{
+  "name": "s3-source-connector",
+  "config": {
+    "connector.class": "com.kafka.connect.s3.S3SourceConnector",
+    "s3.bucket.name": "my-s3-bucket",
+    "topic": "s3-data-topic",
+    "s3.region": "us-west-2",
+    "s3.prefix": "data/",
+    "s3.suffix": ".json",
+    "file.format": "json",
+    "json.array.mode": "false",
+    "read.mode": "incremental",
+    "poll.interval.ms": "60000",
+    "max.objects.per.poll": "100",
+    "batch.size": "1000",
+    "include.metadata": "true",
+    "metadata.field.prefix": "__s3_",
+    "error.handling": "skip",
+    "dead.letter.topic": "s3-dlq-topic",
+    "max.retries": "3",
+    "retry.backoff.ms": "1000",
+    "connect.timeout.ms": "10000",
+    "socket.timeout.ms": "50000",
+    "tasks.max": "1"
+  }
+}
