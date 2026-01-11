@@ -13,6 +13,7 @@ import software.amazon.awssdk.http.SdkHttpClient;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.*;
 
 import java.time.Duration;
@@ -48,12 +49,30 @@ public class S3ClientWrapper implements AutoCloseable {
                 .socketTimeout(Duration.ofMillis(config.getSocketTimeoutMs()))
                 .build();
 
-        this.s3Client = S3Client.builder()
+        S3ClientBuilder s3Builder = S3Client.builder()
                 .region(Region.of(config.getRegion()))
                 .credentialsProvider(credentialsProvider)
                 .httpClient(httpClient)
-                .overrideConfiguration(b -> b.retryPolicy(retryPolicy))
-                .build();
+                .overrideConfiguration(b -> b.retryPolicy(retryPolicy));
+        
+        // Configure custom endpoint if provided (for S3-compatible storage)
+        String endpointUrl = config.getEndpointUrl();
+        if (endpointUrl != null && !endpointUrl.isEmpty()) {
+            try {
+                s3Builder.endpointOverride(new java.net.URI(endpointUrl));
+                log.info("Using custom S3 endpoint: {}", endpointUrl);
+            } catch (java.net.URISyntaxException e) {
+                throw new IllegalArgumentException("Invalid S3 endpoint URL: " + endpointUrl, e);
+            }
+            
+            // Enable path-style access if configured (required for some S3-compatible storage)
+            if (config.getPathStyleAccess()) {
+                s3Builder.forcePathStyle(true);
+                log.debug("Path-style access enabled");
+            }
+        }
+        
+        this.s3Client = s3Builder.build();
 
         log.info("S3Client initialized for bucket: {}, region: {}", config.getBucketName(), config.getRegion());
     }
@@ -70,14 +89,14 @@ public class S3ClientWrapper implements AutoCloseable {
                 credentials = AwsBasicCredentials.create(accessKeyId, secretAccessKey);
                 // Note: AWS SDK v2 uses different approach for session tokens
                 // For simplicity, using basic credentials. For production, use TemporaryCredentialsProvider
-                log.info("Using static credentials with session token");
+                log.debug("Using static credentials with session token");
             } else {
                 credentials = AwsBasicCredentials.create(accessKeyId, secretAccessKey);
-                log.info("Using static credentials");
+                log.debug("Using static credentials");
             }
             return StaticCredentialsProvider.create(credentials);
         } else {
-            log.info("Using default credential chain");
+            log.debug("Using default credential chain");
             return DefaultCredentialsProvider.create();
         }
     }
@@ -114,6 +133,25 @@ public class S3ClientWrapper implements AutoCloseable {
      * Get object content as byte array
      */
     public byte[] getObjectContent(String key) {
+        // Validate key to prevent path traversal attacks
+        if (key == null || key.isEmpty()) {
+            throw new IllegalArgumentException("Object key cannot be null or empty");
+        }
+        
+        // Check for various path traversal patterns
+        if (key.contains("..") || 
+            key.startsWith("/") || 
+            key.contains("\\") ||
+            key.contains("%2e%2e") || // URL-encoded ..
+            key.contains("%2E%2E") ||
+            key.contains("%2f") ||     // URL-encoded /
+            key.contains("%2F") ||
+            key.contains("%5c") ||     // URL-encoded \
+            key.contains("%5C") ||
+            key.contains("\0")) {      // Null byte
+            throw new IllegalArgumentException("Invalid object key: potential path traversal detected");
+        }
+        
         return executeWithRetry(() -> {
             GetObjectRequest request = GetObjectRequest.builder()
                     .bucket(config.getBucketName())

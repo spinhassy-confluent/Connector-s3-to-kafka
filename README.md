@@ -53,6 +53,8 @@ This will create a JAR file in the `target` directory with all dependencies incl
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `s3.region` | string | `us-east-1` | AWS region where the S3 bucket is located |
+| `s3.endpoint.url` | string | (empty) | Custom S3 endpoint URL for S3-compatible storage (e.g., MinIO, Ceph). Leave empty for AWS S3. |
+| `s3.path.style.access` | boolean | `false` | Use path-style access for S3 (required for some S3-compatible storage). Default is virtual-hosted-style. |
 | `aws.access.key.id` | string | (empty) | AWS access key ID. If not provided, uses default credential chain |
 | `aws.secret.access.key` | password | (empty) | AWS secret access key. If not provided, uses default credential chain |
 | `aws.session.token` | password | (empty) | AWS session token for temporary credentials |
@@ -195,6 +197,26 @@ This will create a JAR file in the `target` directory with all dependencies incl
 }
 ```
 
+### MinIO / S3-Compatible Storage Configuration
+
+```json
+{
+  "name": "s3-minio-connector",
+  "config": {
+    "connector.class": "com.kafka.connect.s3.S3SourceConnector",
+    "s3.bucket.name": "my-bucket",
+    "topic": "s3-data",
+    "s3.region": "us-east-1",
+    "s3.endpoint.url": "http://minio:9000",
+    "s3.path.style.access": "true",
+    "aws.access.key.id": "minioadmin",
+    "aws.secret.access.key": "minioadmin",
+    "file.format": "json",
+    "tasks.max": "1"
+  }
+}
+```
+
 ## Usage
 
 ### Creating a Connector via REST API
@@ -280,9 +302,57 @@ Monitor the connector using:
 ### Common Issues
 
 1. **Authentication Errors**: Verify AWS credentials and IAM permissions
+   - Error: `Access Denied` - Check that the IAM user/role has `s3:ListBucket` and `s3:GetObject` permissions
+   - Error: `Invalid credentials` - Verify `aws.access.key.id` and `aws.secret.access.key` are correct
+   - Solution: Use IAM roles when running in AWS (preferred) or verify credentials are valid
+
 2. **Timeout Errors**: Increase `connect.timeout.ms` and `socket.timeout.ms`
+   - Error: `Connection timeout` - Network issues or S3 endpoint unreachable
+   - Error: `Socket timeout` - Large files taking too long to download
+   - Solution: Increase timeouts or check network connectivity
+
 3. **Memory Issues**: Reduce `batch.size` and `max.objects.per.poll`
+   - Error: `OutOfMemoryError` - Processing too many large files
+   - Solution: Reduce batch size, increase JVM heap size, or filter by `max.object.size`
+
 4. **Processing Delays**: Adjust `poll.interval.ms` based on your needs
+   - Symptom: Connector not picking up new files quickly
+   - Solution: Reduce `poll.interval.ms` for more frequent polling
+
+5. **Bucket Not Found**: Verify bucket name and region
+   - Error: `NoSuchBucket` - Bucket doesn't exist or wrong region
+   - Solution: Check `s3.bucket.name` and `s3.region` configuration
+
+6. **Invalid File Format**: Ensure `file.format` matches actual file content
+   - Error: `JSON parsing failed` - File is not valid JSON
+   - Solution: Verify file format or use `text` format as fallback
+
+7. **Dead Letter Queue Issues**:
+   - Error: `dead.letter.topic` required when `error.handling=skip`
+   - Solution: Configure `dead.letter.topic` or use `error.handling=fail`
+
+8. **S3-Compatible Storage (MinIO, Ceph)**:
+   - Error: Connection refused or bucket not found
+   - Solution: Configure `s3.endpoint.url` and set `s3.path.style.access=true`
+
+### Error Handling Modes
+
+**Fail Mode (default)**
+```
+error.handling=fail
+```
+When an error occurs, the connector stops and reports the error. Requires manual intervention to resolve the issue and restart.
+
+**Skip Mode**
+```
+error.handling=skip
+dead.letter.topic=s3-errors
+```
+When an error occurs, the connector:
+1. Logs the error with sanitized message
+2. Skips the problematic object
+3. Sends error information to the dead letter topic
+4. Continues processing other objects
 
 ### Logging
 
@@ -292,12 +362,140 @@ Enable debug logging by setting the log level:
 log4j.logger.com.kafka.connect.s3=DEBUG
 ```
 
+## Performance Tuning
+
+### Optimizing Throughput
+
+1. **Increase Tasks**
+   - Set `tasks.max` > 1 to process files in parallel
+   - Each task processes a subset of S3 objects
+   - Recommended: 1 task per vCPU core, up to 10 tasks
+
+2. **Batch Configuration**
+   - Increase `batch.size` for better throughput (default: 1000)
+   - Larger batches reduce network overhead
+   - Balance with memory usage
+
+3. **Poll Configuration**
+   - Reduce `poll.interval.ms` for faster file pickup
+   - Increase `max.objects.per.poll` to process more files per poll
+   - Consider S3 API rate limits
+
+4. **File Filtering**
+   - Use `s3.prefix` to narrow down file selection
+   - Use `s3.suffix` to filter by file type
+   - Use size filters to exclude files outside target range
+
+### Memory Optimization
+
+1. **Reduce batch sizes** if experiencing OOM errors
+2. **Filter large files** using `max.object.size`
+3. **Increase JVM heap**: `-Xmx2g` or higher
+4. **Use incremental mode** to avoid reprocessing
+
+### Network Optimization
+
+1. **Increase timeouts** for large files:
+   ```
+   connect.timeout.ms=30000
+   socket.timeout.ms=120000
+   ```
+
+2. **Use VPC endpoints** when running in AWS to reduce latency
+
+3. **Enable retry logic**:
+   ```
+   max.retries=5
+   retry.backoff.ms=2000
+   ```
+
+### Recommended Production Settings
+
+```json
+{
+  "name": "s3-source-production",
+  "config": {
+    "connector.class": "com.kafka.connect.s3.S3SourceConnector",
+    "tasks.max": "4",
+    "s3.bucket.name": "my-bucket",
+    "topic": "s3-data",
+    "s3.region": "us-west-2",
+    "s3.prefix": "data/",
+    "file.format": "json",
+    "read.mode": "incremental",
+    "poll.interval.ms": "30000",
+    "max.objects.per.poll": "50",
+    "batch.size": "2000",
+    "max.retries": "5",
+    "retry.backoff.ms": "2000",
+    "connect.timeout.ms": "30000",
+    "socket.timeout.ms": "120000",
+    "error.handling": "skip",
+    "dead.letter.topic": "s3-dlq",
+    "include.metadata": "true"
+  }
+}
+```
+
 ## Security
 
-- Use IAM roles when possible instead of access keys
-- Store sensitive credentials in a secure credential store
-- Use VPC endpoints for S3 access when in AWS
-- Enable S3 bucket encryption
+### Best Practices
+
+- **Use IAM roles when possible** instead of access keys - this is the most secure method
+- **Store sensitive credentials** in a secure credential store (e.g., AWS Secrets Manager, HashiCorp Vault)
+- **Use VPC endpoints** for S3 access when running in AWS to keep traffic within AWS network
+- **Enable S3 bucket encryption** (SSE-S3, SSE-KMS, or SSE-C) to protect data at rest
+- **Enable bucket versioning** to protect against accidental deletion
+- **Use least privilege principle** - grant only the minimum required S3 permissions:
+  - `s3:ListBucket` on the bucket
+  - `s3:GetObject` on objects within the bucket
+  - Optionally `s3:GetObjectVersion` if using versioned buckets
+- **Never commit credentials** to version control
+- **Rotate credentials regularly** if using access keys
+- **Monitor access logs** to detect unusual access patterns
+- **Use HTTPS/TLS** for all S3 connections (enabled by default)
+
+### S3 Bucket Policy Example
+
+Minimal IAM policy for the connector:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::your-bucket-name"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::your-bucket-name/*"
+    }
+  ]
+}
+```
+
+### Configuration Validation
+
+The connector validates:
+- S3 bucket name format (prevents injection attacks)
+- Timestamp formats (ISO 8601)
+- Positive values for timeouts and sizes
+- Required fields based on error handling mode
+
+### Error Message Sanitization
+
+Error messages are sanitized to prevent exposure of sensitive information such as:
+- AWS access keys
+- Secret access keys
+- Passwords
+- Session tokens
 
 ## License
 

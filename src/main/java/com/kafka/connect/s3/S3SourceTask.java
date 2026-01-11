@@ -26,6 +26,7 @@ public class S3SourceTask extends SourceTask {
     private String continuationToken = null;
     private List<SourceRecord> recordBuffer = new ArrayList<>();
     private int taskId = 0;
+    private long lastPollTime = 0;
 
     @Override
     public String version() {
@@ -59,7 +60,7 @@ public class S3SourceTask extends SourceTask {
     }
 
     @Override
-    public List<SourceRecord> poll() throws InterruptedException {
+    public List<SourceRecord> poll() {
         if (!running.get()) {
             return null;
         }
@@ -71,13 +72,28 @@ public class S3SourceTask extends SourceTask {
             return records;
         }
 
+        // Check if we should wait before polling
+        long currentTime = System.currentTimeMillis();
+        long timeSinceLastPoll = currentTime - lastPollTime;
+        if (lastPollTime > 0 && timeSinceLastPoll < config.getPollIntervalMs()) {
+            long sleepTime = config.getPollIntervalMs() - timeSinceLastPoll;
+            try {
+                Thread.sleep(sleepTime);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.debug("Sleep interrupted during poll interval");
+                return null;
+            }
+        }
+
         try {
             // Poll S3 for new objects
             List<S3Object> objects = s3Client.listObjects(continuationToken);
+            lastPollTime = System.currentTimeMillis();
             
             if (objects.isEmpty()) {
-                // No new objects, wait before next poll
-                Thread.sleep(config.getPollIntervalMs());
+                // No new objects, reset continuation token and return empty
+                continuationToken = null;
                 return Collections.emptyList();
             }
 
@@ -99,9 +115,10 @@ public class S3SourceTask extends SourceTask {
                 }
             }
 
-            // Update continuation token for next poll
-            // Note: In a real implementation, you'd get this from the list response
-            continuationToken = null; // Simplified - would need proper pagination handling
+            // Note: In a production implementation, you would get the continuation token
+            // from the ListObjectsV2Response and store it for the next poll
+            // For now, we reset it to start from the beginning each time
+            continuationToken = null;
 
             // Batch records if configured
             if (records.size() > config.getBatchSize()) {
@@ -111,10 +128,6 @@ public class S3SourceTask extends SourceTask {
 
             return records;
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            log.info("Task interrupted");
-            return null;
         } catch (Exception e) {
             log.error("Error during poll", e);
             if ("fail".equals(config.getErrorHandling())) {
@@ -125,8 +138,25 @@ public class S3SourceTask extends SourceTask {
     }
 
     private List<SourceRecord> processObject(S3Object s3Object) {
+        if (s3Object == null) {
+            log.warn("Received null S3 object, skipping");
+            return Collections.emptyList();
+        }
+        
         String objectKey = s3Object.key();
-        long lastModified = s3Object.lastModified().toEpochMilli();
+        if (objectKey == null || objectKey.isEmpty()) {
+            log.warn("S3 object has null or empty key, skipping");
+            return Collections.emptyList();
+        }
+        
+        // Get last modified timestamp
+        long lastModified;
+        if (s3Object.lastModified() != null) {
+            lastModified = s3Object.lastModified().toEpochMilli();
+        } else {
+            log.warn("S3 object {} has null lastModified timestamp, using current time. This may affect offset tracking.", objectKey);
+            lastModified = System.currentTimeMillis();
+        }
 
         log.debug("Processing S3 object: {}", objectKey);
 
@@ -144,19 +174,28 @@ public class S3SourceTask extends SourceTask {
         // Get object content
         byte[] content = s3Client.getObjectContent(objectKey);
         
+        if (content == null || content.length == 0) {
+            log.warn("Object {} has no content, skipping", objectKey);
+            return Collections.emptyList();
+        }
+        
         // Parse content based on file format
         List<Map<String, Object>> parsedRecords = fileParser.parse(content, objectKey);
 
         // Convert to SourceRecords
         List<SourceRecord> sourceRecords = new ArrayList<>();
         for (Map<String, Object> record : parsedRecords) {
+            if (record == null) {
+                continue;
+            }
+            
             // Add metadata if configured
             if (config.getIncludeMetadata()) {
                 String prefix = config.getMetadataFieldPrefix();
                 record.put(prefix + "key", objectKey);
                 record.put(prefix + "size", s3Object.size());
-                record.put(prefix + "last_modified", s3Object.lastModified().toString());
-                record.put(prefix + "etag", s3Object.eTag());
+                record.put(prefix + "last_modified", s3Object.lastModified() != null ? s3Object.lastModified().toString() : "unknown");
+                record.put(prefix + "etag", s3Object.eTag() != null ? s3Object.eTag() : "unknown");
             }
 
             // Create Kafka record
@@ -220,7 +259,9 @@ public class S3SourceTask extends SourceTask {
     }
 
     private void handleError(String objectKey, Exception e, List<SourceRecord> records) {
-        log.error("Error processing object: {}", objectKey, e);
+        // Sanitize error message to avoid exposing sensitive information
+        String sanitizedMessage = sanitizeErrorMessage(e.getMessage());
+        log.error("Error processing object: {}, error: {}", objectKey, sanitizedMessage);
 
         if ("fail".equals(config.getErrorHandling())) {
             throw new RuntimeException("Failed to process object: " + objectKey, e);
@@ -232,7 +273,8 @@ public class S3SourceTask extends SourceTask {
             if (dlqTopic != null && !dlqTopic.isEmpty()) {
                 try {
                     Map<String, Object> errorRecord = new HashMap<>();
-                    errorRecord.put("error", e.getMessage());
+                    errorRecord.put("error", sanitizedMessage);
+                    errorRecord.put("error_type", e.getClass().getSimpleName());
                     errorRecord.put("object_key", objectKey);
                     errorRecord.put("timestamp", System.currentTimeMillis());
                     
@@ -252,6 +294,23 @@ public class S3SourceTask extends SourceTask {
                 }
             }
         }
+    }
+    
+    /**
+     * Sanitize error messages to prevent sensitive information exposure
+     */
+    private String sanitizeErrorMessage(String message) {
+        if (message == null) {
+            return "Unknown error";
+        }
+        
+        // Remove potential access keys, secrets, and credentials from error messages
+        String sanitized = message.replaceAll("(?i)(aws[_-]?access[_-]?key[_-]?id|access[_-]?key)[:\\s=]+[A-Za-z0-9]{16,}", "$1=***");
+        sanitized = sanitized.replaceAll("(?i)(aws[_-]?secret[_-]?access[_-]?key|secret[_-]?key)[:\\s=]+[A-Za-z0-9/+=]{40}", "$1=***");
+        sanitized = sanitized.replaceAll("(?i)(password|passwd|pwd)[:\\s=]+\\S+", "$1=***");
+        sanitized = sanitized.replaceAll("(?i)(session[_-]?token|token)[:\\s=]+[A-Za-z0-9/+=]{16,}", "$1=***");
+        
+        return sanitized;
     }
 
     @Override
